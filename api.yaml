@@ -1,0 +1,441 @@
+openapi: 3.0.3
+info:
+  title: Recipe Book API
+  description: |
+    REST API кулинарной книги: публикация и поиск рецептов.
+
+    ## Аутентификация
+    Все операции требуют JWT в заголовке `Authorization: Bearer <token>`.
+
+    ## Модель ошибок
+    - `401` — токен отсутствует или просрочен: сервер **не знает, кто вы**.
+    - `403` — токен валиден, но прав не хватает: сервер **знает, кто вы, но нельзя**
+      (например, правка чужого рецепта).
+    - `404` — ресурс с таким идентификатором не существует.
+
+    ## Про DTO
+    Наружу отдаются только DTO (`components/schemas`). Внутренние поля сущности —
+    статус модерации, служебные метки, вес в поисковой выдаче — в контракт не
+    попадают. Поля, которые выставляет сервер (`id`, `author`, `createdAt`),
+    помечены `readOnly` и в запросах не принимаются.
+  version: 1.0.0
+  contact:
+    name: Recipe Book Team
+
+servers:
+  - url: http://localhost:8080/api/v1
+
+tags:
+  - name: recipes
+    description: Операции с рецептами
+
+paths:
+  /recipes:
+    get:
+      tags: [recipes]
+      summary: Список рецептов с фильтрами и пагинацией
+      operationId: listRecipes
+      parameters:
+        - name: tag
+          in: query
+          description: Фильтр по тегу (например, `vegan`, `dessert`)
+          required: false
+          schema:
+            type: string
+        - name: difficulty
+          in: query
+          description: Фильтр по сложности
+          required: false
+          schema:
+            $ref: '#/components/schemas/Difficulty'
+        - name: maxCookingTime
+          in: query
+          description: Максимальное время приготовления, минут
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: page
+          in: query
+          description: Номер страницы (с 1)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          description: Размер страницы (макс. 50)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Страница списка рецептов (краткие карточки, без шагов)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipePage'
+        '400':
+          description: Некорректные параметры запроса (например, pageSize > 50)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Нет или просрочен Bearer-токен — сервер не знает, кто вы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - bearerAuth: []
+
+    post:
+      tags: [recipes]
+      summary: Опубликовать новый рецепт
+      operationId: createRecipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeCreate'
+      responses:
+        '201':
+          description: Рецепт создан
+          headers:
+            Location:
+              description: URL созданного рецепта
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetail'
+        '400':
+          description: Тело запроса не прошло валидацию (пустой title, нет ингредиентов)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Нет или просрочен Bearer-токен — сервер не знает, кто вы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - bearerAuth: []
+
+  /recipes/{recipeId}:
+    get:
+      tags: [recipes]
+      summary: Получить один рецепт целиком (с ингредиентами и шагами)
+      operationId: getRecipe
+      parameters:
+        - name: recipeId
+          in: path
+          required: true
+          description: Идентификатор рецепта
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Полное описание рецепта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetail'
+        '401':
+          description: Нет или просрочен Bearer-токен — сервер не знает, кто вы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Рецепт с таким id не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - bearerAuth: []
+
+    patch:
+      tags: [recipes]
+      summary: Частично обновить рецепт (только автор)
+      operationId: updateRecipe
+      parameters:
+        - name: recipeId
+          in: path
+          required: true
+          description: Идентификатор рецепта
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        description: Только те поля, которые нужно изменить
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeUpdate'
+      responses:
+        '200':
+          description: Рецепт обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecipeDetail'
+        '400':
+          description: Тело запроса не прошло валидацию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Нет или просрочен Bearer-токен — сервер не знает, кто вы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Токен валиден, но вы не автор рецепта — править чужое нельзя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Рецепт с таким id не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - bearerAuth: []
+
+    delete:
+      tags: [recipes]
+      summary: Удалить рецепт (только автор)
+      operationId: deleteRecipe
+      parameters:
+        - name: recipeId
+          in: path
+          required: true
+          description: Идентификатор рецепта
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Рецепт удалён, тело ответа пустое
+        '401':
+          description: Нет или просрочен Bearer-токен — сервер не знает, кто вы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Токен валиден, но вы не автор рецепта — удалять чужое нельзя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Рецепт с таким id не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Difficulty:
+      type: string
+      enum: [easy, medium, hard]
+      example: easy
+
+    Ingredient:
+      type: object
+      required: [name, amount]
+      properties:
+        name:
+          type: string
+          example: Мука пшеничная
+        amount:
+          type: number
+          format: float
+          example: 250
+        unit:
+          type: string
+          description: г, мл, шт и т.п.
+          example: г
+
+    RecipeSummary:
+      description: Краткая карточка рецепта для списков — без шагов и ингредиентов
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          example: Блины классические
+        description:
+          type: string
+          example: Тонкие блины на молоке
+        difficulty:
+          $ref: '#/components/schemas/Difficulty'
+        cookingTimeMinutes:
+          type: integer
+          example: 40
+        tags:
+          type: array
+          items:
+            type: string
+          example: [breakfast, dessert]
+        author:
+          $ref: '#/components/schemas/Author'
+
+    RecipeDetail:
+      description: Полная карточка рецепта для страницы просмотра
+      allOf:
+        - $ref: '#/components/schemas/RecipeSummary'
+        - type: object
+          properties:
+            ingredients:
+              type: array
+              items:
+                $ref: '#/components/schemas/Ingredient'
+            steps:
+              type: array
+              items:
+                type: string
+              example: ["Смешать муку и молоко", "Выпекать на сковороде"]
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+
+    RecipeCreate:
+      description: Входной DTO публикации. id/author/createdAt сервер ставит сам
+      type: object
+      required: [title, ingredients, steps]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        difficulty:
+          $ref: '#/components/schemas/Difficulty'
+        cookingTimeMinutes:
+          type: integer
+          minimum: 1
+        tags:
+          type: array
+          items:
+            type: string
+        ingredients:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Ingredient'
+        steps:
+          type: array
+          minItems: 1
+          items:
+            type: string
+
+    RecipeUpdate:
+      description: Входной DTO частичного обновления, все поля опциональны
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        difficulty:
+          $ref: '#/components/schemas/Difficulty'
+        cookingTimeMinutes:
+          type: integer
+          minimum: 1
+        tags:
+          type: array
+          items:
+            type: string
+        ingredients:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Ingredient'
+        steps:
+          type: array
+          minItems: 1
+          items:
+            type: string
+
+    Author:
+      description: Публичная информация об авторе — только то, что можно показывать
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        displayName:
+          type: string
+          example: chef_maria
+
+    RecipePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecipeSummary'
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 137
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Машиночитаемый код ошибки
+          example: RECIPE_NOT_FOUND
+        message:
+          type: string
+          description: Человекочитаемое описание
+          example: Recipe 3fa85f64... not found

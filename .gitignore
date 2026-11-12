@@ -1,0 +1,10 @@
+# инструмент кодогенерации — качать отдельно
+openapi-generator-cli.jar
+
+# python окружение
+.venv/
+__pycache__/
+*.egg-info/
+
+# windows-артефакты
+nul
